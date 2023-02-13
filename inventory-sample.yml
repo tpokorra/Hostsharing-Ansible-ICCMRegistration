@@ -1,0 +1,20 @@
+registration:
+  hosts:
+    xyz00:
+      ansible_ssh_host: xyz00.hostsharing.net
+      ansible_ssh_user: xyz00
+      pac: xyz00
+      domain: registration.example.org
+      user: registration
+      password: testpassw0rd_changeme
+
+      db_name: registration
+      db_user: registration
+      db_password: testpassw0rd2_changeme
+
+
+      AdminEmail: admin@example.org
+      AdminPassword: testpassw0rd3_changeme
+
+      # see https://getcomposer.org/download/
+      composer_version: 2.5.3

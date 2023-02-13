@@ -1,0 +1,137 @@
+---
+- hosts: registration
+  become_user: "{{pac}}-{{user}}"
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    # see https://docs.ansible.com/ansible/latest/user_guide/become.html#risks-of-becoming-an-unprivileged-user
+    ansible_common_remote_group: "{{pac}}"
+    ansible_remote_tmp: ~/.ansible/tmp
+
+  tasks:
+  - name: Create user, domain and database
+    import_tasks: tasks/hs_basis.yml
+
+  #################################
+  ## install requirements
+  #################################
+  - name: Install composer
+    import_tasks: tasks/hs_composer.yml
+  - name: Install lastest PHP
+    import_tasks: tasks/hs_php8_buster.yml
+
+  ##################################
+  ## install registration
+  ##################################
+
+  - name: Check for git working tree
+    become: yes
+    stat:
+      path: /home/pacs/{{pac}}/users/{{user}}/registration
+    register: workingtree
+  - name: get repo
+    become: yes
+    become_user: "{{pac}}-{{user}}"
+    git:
+      repo: https://github.com/ICCM-EU/iccm-registration.git
+      dest: /home/pacs/{{pac}}/users/{{user}}/registration
+      version: "main"
+    when: not workingtree.stat.exists
+
+  - name: install packages with composer
+    become: yes
+    shell: |
+      php7.4 ~/composer/composer.phar install --no-dev || exit -1
+    args:
+      executable: /bin/bash
+      chdir: "/home/pacs/{{pac}}/users/{{user}}/registration"
+      creates: "/home/pacs/{{pac}}/users/{{user}}/registration/vendor"
+
+  ##################################
+  ## configuration
+  ##################################
+
+  - name: upload the password for the mysql database
+    become: yes
+    template:
+      src: "templates/my.cnf"
+      dest: "/home/pacs/{{pac}}/users/{{user}}/.my.cnf"
+      mode: "700"
+
+  - name: upload the configuration file
+    become: yes
+    template:
+      src: "templates/env"
+      dest: "/home/pacs/{{pac}}/users/{{user}}/registration/.env"
+      mode: "700"
+
+  - name: set unique application key
+    become: yes
+    shell: |
+      yes | php8.1 artisan key:generate || exit -1
+    args:
+      executable: /bin/bash
+      chdir: "/home/pacs/{{pac}}/users/{{user}}/registration"
+
+  - name: create directory for psysh config
+    become: yes
+    file:
+      path: "/home/pacs/{{pac}}/users/{{user}}/.config/psysh"
+      state: directory
+
+  - name: create tmp directory
+    become: yes
+    file:
+      path: "/home/pacs/{{pac}}/users/{{user}}/tmp"
+      state: directory
+
+  - name: upload the psysh configuration file
+    become: yes
+    template:
+      src: "templates/psysh.config.php"
+      dest: "/home/pacs/{{pac}}/users/{{user}}/.config/psysh/config.php"
+      mode: "700"
+
+  ######################
+  ## initialise instance
+  ######################
+  - name: initialise the database
+    become: yes
+    shell: |
+      yes | php artisan migrate || exit -1
+    args:
+      executable: /bin/bash
+      chdir: "/home/pacs/{{pac}}/users/{{user}}/registration"
+
+  - name: load example data
+    become: yes
+    shell: |
+      mysql < database/database-example.sql || exit -1
+    args:
+      executable: /bin/bash
+      chdir: "/home/pacs/{{pac}}/users/{{user}}/registration"
+
+  - name: update the admin user
+    become: yes
+    shell: |
+      php artisan tinker --execute="\$user = User::where('name', 'admin')->first();\$user->password = Hash::make('{{AdminPassword}}');\$user->email = '{{AdminEmail}}';\$user->save();" || exit -1
+    args:
+      executable: /bin/bash
+      chdir: "/home/pacs/{{pac}}/users/{{user}}/registration"
+
+  ########################
+  ## setup the apache site
+  ########################
+  - name: drop htdocs-ssl
+    become: yes
+    become_user: "{{pac}}-{{user}}"
+    file:
+       path: "/home/pacs/{{pac}}/users/{{user}}/doms/{{domain}}/htdocs-ssl"
+       state: absent
+  - name: create symbolic link for htdocs-ssl
+    become: yes
+    become_user: "{{pac}}-{{user}}"
+    file:
+      src: "/home/pacs/{{pac}}/users/{{user}}/registration/public"
+      dest: "/home/pacs/{{pac}}/users/{{user}}/doms/{{domain}}/htdocs-ssl"
+      state: link
+
